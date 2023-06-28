@@ -6,6 +6,7 @@ from tqdm import tqdm
 from functools import partial
 import GPUtil
 from torchvision import transforms, utils
+import cv2
 
 
 from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like, \
@@ -102,8 +103,12 @@ class DDIMSamplerWithGrad(object):
         for param in self.model.module.first_stage_model.parameters():
             param.requires_grad = False
 
-
-
+        dir_xt = 0
+        prev_e_t_uncond = 0
+        prev_e_t = 0
+        prev_g = 0
+        prev_pred_x0 = 0
+        lr = 0.001
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
@@ -142,7 +147,10 @@ class DDIMSamplerWithGrad(object):
                         e_t = self.model.module.apply_model(img_in, ts, cond)
 
                     pred_x0 = (img_in - sqrt_one_minus_at * e_t) / a_t.sqrt()
+
                     recons_image = self.model.module.decode_first_stage_with_grad(pred_x0)
+                    cv2.imwrite('debug/%05d.png'%i, recons_image.cpu().detach()[0].permute(1,2,0)[:, :, [2, 1, 0]].numpy() * 255)
+                    print(recons_image.cpu().detach().numpy().shape)
 
                     if other_guidance_func != None:
                         op_im = other_guidance_func(recons_image)
@@ -165,13 +173,17 @@ class DDIMSamplerWithGrad(object):
                         grad = torch.autograd.grad(selected.sum(), img_in)[0]
                         grad = grad * operation.optim_guidance_3_wt
 
-                        e_t = e_t - sqrt_one_minus_at * grad.detach()
+                        #e_t = e_t - sqrt_one_minus_at * grad.detach()
+                        prev_g = prev_g * 0.0 + grad.detach() 
+                        e_t = e_t - sqrt_one_minus_at * prev_g
+                        e_t = prev_e_t * sqrt_one_minus_at * 0.0 + e_t 
+
 
                         img_in = img_in.requires_grad_(False)
 
                         if operation.print:
                             if j == 0:
-                                temp = (recons_image + 1) * 0.5
+                                temp = (recons_image + 1) * 0.1
                                 utils.save_image(temp, f'{operation.folder}/img_at_{ts[0]}.png')
 
                         del img_in, pred_x0, recons_image, op_im, selected, grad
@@ -180,6 +192,7 @@ class DDIMSamplerWithGrad(object):
 
                     else:
                         e_t = e_t
+                        e_t = prev_e_t* sqrt_one_minus_at * 0.0 + e_t 
                         img_in = img_in.requires_grad_(False)
 
                         if operation.print:
@@ -191,7 +204,8 @@ class DDIMSamplerWithGrad(object):
                         if operation.original_guidance:
                             del x_in
 
-
+                    prev_e_t = e_t.detach() / sqrt_one_minus_at
+                    
                     torch.set_grad_enabled(False)
 
                 else:
@@ -207,15 +221,24 @@ class DDIMSamplerWithGrad(object):
                 with torch.no_grad():
                     # current prediction for x_0
                     pred_x0 = (img - sqrt_one_minus_at * e_t) / a_t.sqrt()
+                    pred_x0 = 0.5 * prev_pred_x0 + pred_x0
+                    prev_pred_x0 = pred_x0.detach()
 
                     # direction pointing to x_t
                     dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t
+                    #dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * (0.9 * dir_xt + e_t)
+                    #dir_xt = e_t / sqrt_one_minus_at
+                    #print('###############################', (1. - a_prev - sigma_t ** 2).sqrt())
                     noise = sigma_t * noise_like(img.shape, device, False) * temperature
 
                     x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+                    #if step == 250: lr = 0.0001
+                    #x_prev =  img - 0.00005* dir_xt + 0.01 * noise_like(img.shape, device, False)
                     img = beta_t.sqrt() * x_prev + (1 - beta_t).sqrt() * noise_like(img.shape, device, False)
 
-                    del pred_x0, dir_xt, noise
+                    del pred_x0, noise #dir_xt, noise
+
+                    
 
             img = x_prev
 

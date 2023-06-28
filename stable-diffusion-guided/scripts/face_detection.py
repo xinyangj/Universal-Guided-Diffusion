@@ -364,7 +364,7 @@ def main():
     parser.add_argument('--text_type', type=int, default=1)
     parser.add_argument("--text", default=None)
     parser.add_argument("--batch_size", default=1, type=int)
-    parser.add_argument('--face_folder', default='./data/face_data')
+    parser.add_argument('--face_folder', default='./data/test')
 
     parser.add_argument('--fr_crop', action='store_true')
     parser.add_argument('--center_face', action='store_true')
