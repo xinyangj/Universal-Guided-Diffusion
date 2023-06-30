@@ -240,8 +240,8 @@ class DDIMSamplerWithGrad(object):
             img = x_prev
             #break
             
-        
-        start_portion = 0.5
+        img0 = img
+        start_portion = 0.3
         iterator = tqdm(time_range[total_steps - int(total_steps * start_portion):], desc='DDIM Sampler 2', total= int(total_steps * start_portion))
         
         for i, step in enumerate(iterator):
@@ -381,8 +381,300 @@ class DDIMSamplerWithGrad(object):
 
             img = x_prev
 
+        return img0, img, start_zt
+
+
+    def sample0(self,
+               S,
+               batch_size,
+               shape,
+               operated_image=None,
+               operation=None,
+               conditioning=None,
+               eta=0.,
+               temperature=1.,
+               verbose=True,
+               unconditional_guidance_scale=1.,
+               unconditional_conditioning=None,
+               start_zt=None, 
+               ):
+
+
+        self.make_schedule(ddim_num_steps=S, ddim_eta=eta, verbose=verbose)
+        # sampling
+        C, H, W = shape
+        shape = (batch_size, C, H, W)
+        cond = conditioning
+
+
+        device = self.model.module.betas.device
+        b = shape[0]
+
+        if start_zt is None:
+            img = torch.randn(shape, device=device)
+            start_zt = img
+        else:
+            img = start_zt
+
+        timesteps = self.ddim_timesteps
+        time_range = np.flip(timesteps)
+        total_steps = timesteps.shape[0]
+
+        iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
+
+        alphas = self.ddim_alphas
+        alphas_prev = self.ddim_alphas_prev
+        sqrt_one_minus_alphas = self.ddim_sqrt_one_minus_alphas
+        sigmas = self.ddim_sigmas
+
+        for param in self.model.module.first_stage_model.parameters():
+            param.requires_grad = False
+
+        dir_xt = 0
+        prev_e_t_uncond = 0
+        prev_e_t = 0
+        prev_g = 0
+        prev_pred_x0 = 0
+        lr = 0.001
+
+        
+        for i, step in enumerate(iterator):
+            index = total_steps - i - 1
+            ts = torch.full((b,), step, device=device, dtype=torch.long)
+
+            b, *_, device = *img.shape, img.device
+
+            # select parameters corresponding to the currently considered timestep
+            a_t = torch.full((b, 1, 1, 1), alphas[index], device=device)
+            a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
+            sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
+            sqrt_one_minus_at = torch.full((b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device)
+
+            beta_t = a_t / a_prev
+            num_steps = operation.num_steps[0]
+
+            operation_func = operation.operation_func
+            other_guidance_func = operation.other_guidance_func
+            criterion = operation.loss_func
+            other_criterion = operation.other_criterion
+
+            for j in range(num_steps):
+
+                if operation.guidance_3:
+
+                    torch.set_grad_enabled(True)
+                    img_in = img.detach().requires_grad_(True)
+
+                    if operation.original_guidance:
+                        x_in = torch.cat([img_in] * 2)
+                        t_in = torch.cat([ts] * 2)
+                        c_in = torch.cat([unconditional_conditioning, cond])
+                        e_t_uncond, e_t = self.model.module.apply_model(x_in, t_in, c_in).chunk(2)
+                        e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                        # del x_in
+                    else:
+                        e_t = self.model.module.apply_model(img_in, ts, cond)
+
+                    pred_x0 = (img_in - sqrt_one_minus_at * e_t) / a_t.sqrt()
+
+                    recons_image = self.model.module.decode_first_stage_with_grad(pred_x0)
+                    cv2.imwrite('debug/%05d.png'%i, recons_image.cpu().detach()[0].permute(1,2,0)[:, :, [2, 1, 0]].numpy() * 255)
+                    print(recons_image.cpu().detach().numpy().shape)
+
+                    if other_guidance_func != None:
+                        op_im = other_guidance_func(recons_image)
+                    elif operation_func != None:
+                        op_im = operation_func(recons_image)
+                    else:
+                        op_im = recons_image
+
+                    if op_im is not None:
+                        if hasattr(operation_func, 'cal_loss'):
+                            selected = -1 * operation_func.cal_loss(recons_image, operated_image).unsqueeze(0)
+                        elif other_criterion != None:
+                            selected = -1 * other_criterion(op_im, operated_image)
+                        else:
+                            selected = -1 * criterion(op_im, operated_image)
+
+                        # print(ts)
+                        # print(selected)
+
+                        grad = torch.autograd.grad(selected.sum(), img_in)[0]
+                        grad = grad * operation.optim_guidance_3_wt
+
+                        #e_t = e_t - sqrt_one_minus_at * grad.detach()
+                        prev_g = prev_g * 0.0 + grad.detach() 
+                        e_t = e_t - sqrt_one_minus_at * prev_g
+                        e_t = prev_e_t * sqrt_one_minus_at * 0.0 + e_t 
+
+
+                        img_in = img_in.requires_grad_(False)
+
+                        if operation.print:
+                            if j == 0:
+                                temp = (recons_image + 1) * 0.1
+                                utils.save_image(temp, f'{operation.folder}/img_at_{ts[0]}.png')
+
+                        del img_in, pred_x0, recons_image, op_im, selected, grad
+                        if operation.original_guidance:
+                            del x_in
+
+                    else:
+                        e_t = e_t
+                        e_t = prev_e_t* sqrt_one_minus_at * 0.0 + e_t 
+                        img_in = img_in.requires_grad_(False)
+
+                        if operation.print:
+                            if j == 0:
+                                temp = (recons_image + 1) * 0.5
+                                utils.save_image(temp, f'{operation.folder}/img_at_{ts[0]}.png')
+
+                        del img_in, pred_x0, recons_image, op_im
+                        if operation.original_guidance:
+                            del x_in
+
+                    prev_e_t = e_t.detach() / sqrt_one_minus_at
+                    
+                    torch.set_grad_enabled(False)
+
+                else:
+                    if operation.original_guidance:
+                        x_in = torch.cat([img] * 2)
+                        t_in = torch.cat([ts] * 2)
+                        c_in = torch.cat([unconditional_conditioning, cond])
+                        e_t_uncond, e_t = self.model.module.apply_model(x_in, t_in, c_in).chunk(2)
+                        e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                    else:
+                        e_t = self.model.module.apply_model(img, ts, cond)
+
+                with torch.no_grad():
+                    # current prediction for x_0
+                    pred_x0 = (img - sqrt_one_minus_at * e_t) / a_t.sqrt()
+                    pred_x0 = 0. * prev_pred_x0 + pred_x0
+                    prev_pred_x0 = pred_x0.detach()
+
+                    # direction pointing to x_t
+                    dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t
+                    #dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * (0.9 * dir_xt + e_t)
+                    #dir_xt = e_t / sqrt_one_minus_at
+                    #print('###############################', (1. - a_prev - sigma_t ** 2).sqrt())
+                    noise = sigma_t * noise_like(img.shape, device, False) * temperature
+
+                    x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+                    #if step == 250: lr = 0.0001
+                    #x_prev =  img - 0.00005* dir_xt + 0.01 * noise_like(img.shape, device, False)
+                    img = beta_t.sqrt() * x_prev + (1 - beta_t).sqrt() * noise_like(img.shape, device, False)
+
+                    del pred_x0, noise #dir_xt, noise
+            img = x_prev
+            break
+          
+
         return img, start_zt
 
+    def sample1(self,
+               S,
+               batch_size,
+               shape,
+               operated_image=None,
+               operation=None,
+               conditioning=None,
+               eta=0.,
+               temperature=1.,
+               verbose=True,
+               unconditional_guidance_scale=1.,
+               unconditional_conditioning=None,
+               start_zt=None, 
+               start_portion = 0.5, 
+               ):
+
+
+        self.make_schedule(ddim_num_steps=S, ddim_eta=eta, verbose=verbose)
+        # sampling
+        C, H, W = shape
+        shape = (batch_size, C, H, W)
+        cond = conditioning
+
+
+        device = self.model.module.betas.device
+        b = shape[0]
+
+        if start_zt is None:
+            img = torch.randn(shape, device=device)
+            start_zt = img
+        else:
+            img = start_zt
+
+        timesteps = self.ddim_timesteps
+        time_range = np.flip(timesteps)
+        total_steps = timesteps.shape[0]
+
+        iterator = tqdm(time_range[total_steps - int(total_steps * start_portion):], desc='DDIM Sampler 1', total= int(total_steps * start_portion))
+
+        alphas = self.ddim_alphas
+        alphas_prev = self.ddim_alphas_prev
+        sqrt_one_minus_alphas = self.ddim_sqrt_one_minus_alphas
+        sigmas = self.ddim_sigmas
+
+        for param in self.model.module.first_stage_model.parameters():
+            param.requires_grad = False
+
+
+
+        dir_xt = 0
+        prev_pred_x0 = 0
+        for i, step in enumerate(iterator):
+            index = int(total_steps * start_portion) - i - 1
+            ts = torch.full((b,), step, device=device, dtype=torch.long)
+
+            b, *_, device = *img.shape, img.device
+
+            # select parameters corresponding to the currently considered timestep
+            a_t = torch.full((b, 1, 1, 1), alphas[index], device=device)
+            a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
+            sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
+            sqrt_one_minus_at = torch.full((b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device)
+
+            if i == 0:
+                noise = sqrt_one_minus_at * noise_like(img.shape, device, False)
+                img = a_prev.sqrt() * img + noise
+
+            beta_t = a_t / a_prev
+            num_steps = operation.num_steps[0]
+
+            if operation.original_guidance:
+                x_in = torch.cat([img] * 2)
+                t_in = torch.cat([ts] * 2)
+                c_in = torch.cat([unconditional_conditioning, cond])
+                e_t_uncond, e_t = self.model.module.apply_model(x_in, t_in, c_in).chunk(2)
+                e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            else:
+                e_t = self.model.module.apply_model(img, ts, cond)
+
+            with torch.no_grad():
+                # current prediction for x_0
+                pred_x0 = (img - sqrt_one_minus_at * e_t) / a_t.sqrt()
+                pred_x0 = 0. * prev_pred_x0 + pred_x0
+                prev_pred_x0 = pred_x0.detach()
+
+                # direction pointing to x_t
+                dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * e_t
+                #dir_xt = (1. - a_prev - sigma_t ** 2).sqrt() * (0.9 * dir_xt + e_t)
+                #dir_xt = e_t / sqrt_one_minus_at
+                #print('###############################', (1. - a_prev - sigma_t ** 2).sqrt())
+                noise = sigma_t * noise_like(img.shape, device, False) * temperature
+
+                x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+                #if step == 250: lr = 0.0001
+                #x_prev =  img - 0.00005* dir_xt + 0.01 * noise_like(img.shape, device, False)
+                img = beta_t.sqrt() * x_prev + (1 - beta_t).sqrt() * noise_like(img.shape, device, False)
+
+                del pred_x0, noise #dir_xt, noise
+            img = x_prev
+            #break
+          
+
+        return img, start_zt
 
     def sample_seperate(self,
                S,

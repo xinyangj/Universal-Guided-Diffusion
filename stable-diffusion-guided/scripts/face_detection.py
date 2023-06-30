@@ -433,7 +433,7 @@ def main():
             c = model.module.get_learned_conditioning(batch_size * [prompt])
             for multiple_tries in range(opt.trials):
                 shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                samples_ddim, start_zt = sampler.sample(S=opt.ddim_steps,
+                samples_ddim0, start_zt = sampler.sample0(S=opt.ddim_steps,
                                                  conditioning=c,
                                                  batch_size=batch_size,
                                                  shape=shape,
@@ -444,9 +444,26 @@ def main():
                                                  operated_image=og_img_guide,
                                                  operation=operation)
 
-                x_samples_ddim = model.module.decode_first_stage(samples_ddim)
-                x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
 
+                samples_ddim, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 operation=operation, 
+                                                 start_zt = samples_ddim0)
+
+
+                x_samples_ddim = model.module.decode_first_stage(samples_ddim)
+                x_samples_ddim0 = model.module.decode_first_stage(samples_ddim0)
+                x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+                x_samples_ddim0 = torch.clamp((x_samples_ddim0 + 1.0) / 2.0, min=0.0, max=1.0)
+
+                utils.save_image(x_samples_ddim0, f'{results_folder}/new_img0_{n}_{multiple_tries}.png')
                 utils.save_image(x_samples_ddim, f'{results_folder}/new_img_{n}_{multiple_tries}.png')
 
 
