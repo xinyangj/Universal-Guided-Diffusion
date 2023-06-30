@@ -445,7 +445,7 @@ def main():
                                                  operation=operation)
 
 
-                samples_ddim, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                samples_ddim1, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
                                                  conditioning=c,
                                                  batch_size=batch_size,
                                                  shape=shape,
@@ -455,16 +455,50 @@ def main():
                                                  eta=opt.ddim_eta,
                                                  operated_image=og_img_guide,
                                                  operation=operation, 
-                                                 start_zt = samples_ddim0)
+                                                 start_zt = samples_ddim0, 
+                                                 start_portion = 0.5)
+                
+                samples_ddim2, start_zt = sampler.sample0(S=opt.ddim_steps,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 operation=operation, 
+                                                 start_zt = samples_ddim1, 
+                                                 start_portion = 0.3
+                                                 )
+                
+                samples_ddim3, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 operation=operation, 
+                                                 start_zt = samples_ddim2, 
+                                                 start_portion = 0.3)
 
 
-                x_samples_ddim = model.module.decode_first_stage(samples_ddim)
                 x_samples_ddim0 = model.module.decode_first_stage(samples_ddim0)
-                x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+                x_samples_ddim1 = model.module.decode_first_stage(samples_ddim1)
+                x_samples_ddim2 = model.module.decode_first_stage(samples_ddim3)
+                x_samples_ddim3 = model.module.decode_first_stage(samples_ddim3)
                 x_samples_ddim0 = torch.clamp((x_samples_ddim0 + 1.0) / 2.0, min=0.0, max=1.0)
+                x_samples_ddim1 = torch.clamp((x_samples_ddim1 + 1.0) / 2.0, min=0.0, max=1.0)
+                x_samples_ddim2 = torch.clamp((x_samples_ddim2 + 1.0) / 2.0, min=0.0, max=1.0)
+                x_samples_ddim3 = torch.clamp((x_samples_ddim3 + 1.0) / 2.0, min=0.0, max=1.0)
 
                 utils.save_image(x_samples_ddim0, f'{results_folder}/new_img0_{n}_{multiple_tries}.png')
-                utils.save_image(x_samples_ddim, f'{results_folder}/new_img_{n}_{multiple_tries}.png')
+                utils.save_image(x_samples_ddim1, f'{results_folder}/new_img1_{n}_{multiple_tries}.png')
+                utils.save_image(x_samples_ddim2, f'{results_folder}/new_img2_{n}_{multiple_tries}.png')
+                utils.save_image(x_samples_ddim3, f'{results_folder}/new_img3_{n}_{multiple_tries}.png')
 
 
 
@@ -473,3 +507,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

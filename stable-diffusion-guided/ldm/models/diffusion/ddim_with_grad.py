@@ -397,6 +397,7 @@ class DDIMSamplerWithGrad(object):
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
                start_zt=None, 
+               start_portion = 1
                ):
 
 
@@ -413,14 +414,17 @@ class DDIMSamplerWithGrad(object):
         if start_zt is None:
             img = torch.randn(shape, device=device)
             start_zt = img
+            none_input = True
         else:
             img = start_zt
+            none_input = False
 
         timesteps = self.ddim_timesteps
         time_range = np.flip(timesteps)
         total_steps = timesteps.shape[0]
 
-        iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
+        #iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
+        iterator = tqdm(time_range[total_steps - int(total_steps * start_portion):], desc='DDIM Sampler', total= int(total_steps * start_portion))
 
         alphas = self.ddim_alphas
         alphas_prev = self.ddim_alphas_prev
@@ -437,9 +441,8 @@ class DDIMSamplerWithGrad(object):
         prev_pred_x0 = 0
         lr = 0.001
 
-        
         for i, step in enumerate(iterator):
-            index = total_steps - i - 1
+            index = int(total_steps * start_portion) - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
 
             b, *_, device = *img.shape, img.device
@@ -449,6 +452,10 @@ class DDIMSamplerWithGrad(object):
             a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
             sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
             sqrt_one_minus_at = torch.full((b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device)
+
+            if i == 0 and not none_input:
+                noise = sqrt_one_minus_at * noise_like(img.shape, device, False)
+                img = a_prev.sqrt() * img + noise
 
             beta_t = a_t / a_prev
             num_steps = operation.num_steps[0]
@@ -567,7 +574,7 @@ class DDIMSamplerWithGrad(object):
 
                     del pred_x0, noise #dir_xt, noise
             img = x_prev
-            break
+            
           
 
         return img, start_zt
@@ -602,8 +609,10 @@ class DDIMSamplerWithGrad(object):
         if start_zt is None:
             img = torch.randn(shape, device=device)
             start_zt = img
+            none_input = True
         else:
             img = start_zt
+            none_input = False
 
         timesteps = self.ddim_timesteps
         time_range = np.flip(timesteps)
@@ -634,8 +643,9 @@ class DDIMSamplerWithGrad(object):
             a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
             sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
             sqrt_one_minus_at = torch.full((b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device)
+            sqrt_one_minus_at_prev = torch.full((b, 1, 1, 1), sqrt_one_minus_alphas[index - 5], device=device)
 
-            if i == 0:
+            if i == 0 and not none_input:
                 noise = sqrt_one_minus_at * noise_like(img.shape, device, False)
                 img = a_prev.sqrt() * img + noise
 
