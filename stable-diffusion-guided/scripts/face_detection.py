@@ -433,6 +433,7 @@ def main():
             c = model.module.get_learned_conditioning(batch_size * [prompt])
             for multiple_tries in range(opt.trials):
                 shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
+                '''
                 samples_ddim0, start_zt = sampler.sample0(S=opt.ddim_steps,
                                                  conditioning=c,
                                                  batch_size=batch_size,
@@ -484,8 +485,122 @@ def main():
                                                  operation=operation, 
                                                  start_zt = samples_ddim2, 
                                                  start_portion = 0.3)
+                '''
 
+                '''
+                samples_ddim0, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 operation=operation, 
+                                                 #start_zt = samples_ddim0, 
+                                                 start_portion = 1)
 
+                samples_ddim0, start_zt = sampler.sample0(S=opt.ddim_steps,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 start_zt = samples_ddim0, 
+                                                 operation=operation, 
+                                                 start_portion = 0.85)
+
+                samples_ddim1, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 operation=operation, 
+                                                 start_zt = samples_ddim0, 
+                                                 start_portion = 0.7
+                                                 )
+
+                samples_ddim2, start_zt = sampler.sample0(S=opt.ddim_steps,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 start_zt = samples_ddim1, 
+                                                 operation=operation, 
+                                                 start_portion = 0.6)
+                
+                samples_ddim3, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 start_zt = samples_ddim2, 
+                                                 operation=operation, 
+                                                 start_portion = 0.5)
+                '''
+                
+                
+                for i, sp in enumerate([0.8, 0.6, 0.4, 0.2]):
+                    if i == 0:
+                        samples_ddim0, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                    conditioning=c,
+                                                    batch_size=batch_size,
+                                                    shape=shape,
+                                                    verbose=False,
+                                                    unconditional_guidance_scale=opt.scale,
+                                                    unconditional_conditioning=uc,
+                                                    eta=opt.ddim_eta,
+                                                    operated_image=og_img_guide,
+                                                    operation=operation, 
+                                                    #start_zt = samples_ddim0, 
+                                                    start_portion = sp)
+                    else:
+                        samples_ddim0, start_zt = sampler.sample1(S=opt.ddim_steps * 5,
+                                                 conditioning=c,
+                                                 batch_size=batch_size,
+                                                 shape=shape,
+                                                 verbose=False,
+                                                 unconditional_guidance_scale=opt.scale,
+                                                 unconditional_conditioning=uc,
+                                                 eta=opt.ddim_eta,
+                                                 operated_image=og_img_guide,
+                                                 start_zt = samples_ddim0, 
+                                                 operation=operation, 
+                                                 start_portion = sp)
+
+                    samples_ddim0, start_zt = sampler.sample0(S=opt.ddim_steps,
+                                                    conditioning=c,
+                                                    batch_size=batch_size,
+                                                    shape=shape,
+                                                    verbose=False,
+                                                    unconditional_guidance_scale=opt.scale,
+                                                    unconditional_conditioning=uc,
+                                                    eta=opt.ddim_eta,
+                                                    operated_image=og_img_guide,
+                                                    start_zt = samples_ddim0, 
+                                                    operation=operation, 
+                                                    start_portion = sp)
+                    out = model.module.decode_first_stage(samples_ddim0)
+                    out = torch.clamp((out + 1.0) / 2.0, min=0.0, max=1.0)
+                    utils.save_image(out, f'{results_folder}/new_img{n}_{multiple_tries}_{i}.png')
+                
+                '''
                 x_samples_ddim0 = model.module.decode_first_stage(samples_ddim0)
                 x_samples_ddim1 = model.module.decode_first_stage(samples_ddim1)
                 x_samples_ddim2 = model.module.decode_first_stage(samples_ddim3)
@@ -499,6 +614,7 @@ def main():
                 utils.save_image(x_samples_ddim1, f'{results_folder}/new_img1_{n}_{multiple_tries}.png')
                 utils.save_image(x_samples_ddim2, f'{results_folder}/new_img2_{n}_{multiple_tries}.png')
                 utils.save_image(x_samples_ddim3, f'{results_folder}/new_img3_{n}_{multiple_tries}.png')
+                '''
 
 
 
